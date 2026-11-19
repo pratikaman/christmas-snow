@@ -56,6 +56,7 @@ final class SnowView: NSView {
     private var motionCooldown: CGFloat = 0
     var density: CGFloat = 1
     let santas = DockSantas()
+    let peekers = PeekingSantas()
     private var dockSnow: [Drift] = []
     private let field = CALayer()
     private var spriteLayers: [CALayer] = []
@@ -66,6 +67,7 @@ final class SnowView: NSView {
         wantsLayer = true
         field.frame = bounds
         field.addSublayer(santas.container)
+        field.addSublayer(peekers.container)
         layer?.addSublayer(field)
     }
     required init?(coder:NSCoder) { fatalError("SnowView is created programmatically") }
@@ -128,7 +130,7 @@ final class SnowView: NSView {
         for gone in old.values { gone.shape.removeFromSuperlayer() }
     }
 
-    func advance(dt: CGFloat, mouse: CGPoint, tilt: CGFloat, impulse: CGFloat) {
+    func advance(dt: CGFloat, mouse: CGPoint, held: Bool, tilt: CGFloat, impulse: CGFloat) {
         guard bounds.width > 0, bounds.height > 0 else { return }
         time += dt
         let previous = previousMouse ?? mouse
@@ -216,6 +218,7 @@ final class SnowView: NSView {
         flakes.removeLast(flakes.count-survivors)
         render()
         santas.update(dt:dt,dockSnow:dockSnow)
+        peekers.update(dt:dt,mouse:mouse,dragging:held && moving)
     }
 
     private func render() {

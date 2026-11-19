@@ -11,10 +11,21 @@ struct Shelf {
 struct DisplayArea {
     let frame: CGRect
     let work: CGRect
+    /// The part of the top of the screen that hides anything the overlay draws beneath it.
+    var blind: CGRect = .null
+}
+
+/// A stretch of a window's top edge with clear sky above it, where a Santa can peek out.
+struct Lookout {
+    let window: Int
+    var left: CGFloat
+    var right: CGFloat
+    var y: CGFloat
 }
 
 struct Layout {
     var shelves: [Shelf] = []
+    var lookouts: [Lookout] = []
     var routes: [DockRoute] = []
     var tabs = 0
     var dockIcons = 0
@@ -67,9 +78,9 @@ private func focusedTabs(_ pid: pid_t) -> (CGRect, [CGRect])? {
     return (bounds, tabs)
 }
 
-private func visibleParts(of shelf: Shelf, behind covers: [CGRect]) -> [Shelf] {
+private func visibleParts(of shelf: Shelf, behind covers: [CGRect], above: CGFloat = 2) -> [Shelf] {
     var segments = [shelf.left...shelf.right]
-    for rect in covers where rect.minY < shelf.y + 1 && rect.maxY > shelf.y - 2 {
+    for rect in covers where rect.minY < shelf.y + 1 && rect.maxY > shelf.y - above {
         segments = segments.flatMap { segment -> [ClosedRange<CGFloat>] in
             let a = segment.lowerBound, b = segment.upperBound
             guard a < rect.maxX && b > rect.minX else { return [segment] }
@@ -84,12 +95,14 @@ private func visibleParts(of shelf: Shelf, behind covers: [CGRect]) -> [Shelf] {
     }
 }
 
-func readLayout(displays: [DisplayArea], foreground: pid_t?, dockPID: pid_t?, mouse: CGPoint) -> Layout {
+func readLayout(displays: [DisplayArea], foreground: pid_t?, dockPID: pid_t?, mouse: CGPoint, clearance: CGFloat) -> Layout {
     let trusted = AXIsProcessTrusted()
     let tabInfo = trusted ? foreground.flatMap(focusedTabs) : nil
     let info = CGWindowListCopyWindowInfo([.optionOnScreenOnly,.excludeDesktopElements], kCGNullWindowID) as? [[String:Any]] ?? []
     var result = Layout(accessibility: trusted)
     var covers: [CGRect] = []
+    // A Santa rising behind an opaque menu bar or the camera notch would never be seen.
+    let blinds = displays.map(\.blind).filter { !$0.isNull }
     for item in info {
         guard (item[kCGWindowLayer as String] as? Int) == 0,
               (item[kCGWindowAlpha as String] as? Double ?? 1) > 0.2,
@@ -112,6 +125,13 @@ func readLayout(displays: [DisplayArea], foreground: pid_t?, dockPID: pid_t?, mo
         let top = Shelf(id:"w\(id)", left:r.minX+5, right:r.maxX-5, y:r.minY+(touchesMenu ? 7 : 2), isWindow:true)
         let columnMasks = tabs.map { CGRect(x:$0.minX, y:r.minY-8, width:$0.width, height:24) }
         result.shelves += visibleParts(of:top, behind:covers+columnMasks)
+        // Santas peek from the real top edge, wherever nothing in front hides the space above it.
+        if r.width >= 120 && r.height >= 60 {
+            let edge = Shelf(id:"p\(id)", left:r.minX, right:r.maxX, y:r.minY, isWindow:true)
+            result.lookouts += visibleParts(of:edge, behind:covers+blinds, above:clearance).map {
+                Lookout(window:id, left:$0.left, right:$0.right, y:$0.y)
+            }
+        }
         covers.append(r)
     }
     var dockFrames: [CGRect] = []

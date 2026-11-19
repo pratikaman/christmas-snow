@@ -4,9 +4,11 @@
 
 Santa’s boots are on your Dock. All three pairs. 🎅
 
+Keep an eye on the tops of your open windows, too. Every so often a Santa pops up from behind one for a look around, then ducks back down if your cursor gets too close.
+
 While they make their rounds, snowflakes settle on your windows. Sweep your cursor through a little drift and watch the powder fly. If your MacBook senses movement, gently tilt it and the flakes will drift with you.
 
-Click the **❄︎ snowflake in your menu bar** when you feel like changing the weather. Pick a light dusting or a snowstorm. Under **Santa Size**, choose Tiny, Small, Medium, or Large. Tiny is particularly good at sneaking past your open tabs.
+Click the **❄︎ snowflake in your menu bar** when you feel like changing the weather. Pick a light dusting or a snowstorm. Under **Santa Size**, choose Tiny, Small, Medium, or Large. Tiny is particularly good at sneaking past your open tabs. If you’d rather work unobserved, switch off **Peeking Santas**.
 
 For snow on individual tabs and Dock icons, choose **Enable Precise Tab and Dock Edges…** from the snowflake menu and allow Accessibility when your Mac asks. When it’s time to put the decorations away, **Quit Christmas Snow** sends everyone home.
 

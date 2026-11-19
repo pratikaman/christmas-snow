@@ -53,8 +53,8 @@ final class DockSantas {
             return CGImageSourceCreateImageAtIndex(source,0,[kCGImageSourceShouldCacheImmediately:true] as CFDictionary)
         }
     }
-    private static let walk = frames("walk",13)
-    private static let idle = frames("idle",16)
+    static let walk = frames("walk",13)
+    static let idle = frames("idle",16)
     let container = CALayer()
     var route: DockRoute?
     var enabled = true

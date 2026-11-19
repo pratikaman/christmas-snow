@@ -23,7 +23,9 @@ final class SnowApp: NSObject, NSApplicationDelegate, NSMenuDelegate {
     private let layoutQueue = DispatchQueue(label:"local.christmassnow.geometry",qos:.utility)
     private let logger = Logger(subsystem:"local.christmassnow",category:"overlay")
     private var showSantas = UserDefaults.standard.object(forKey:"showSantas") as? Bool ?? true
+    private var showPeekers = UserDefaults.standard.object(forKey:"peekingSantas") as? Bool ?? true
     private var santaSize = UserDefaults.standard.string(forKey:"santaSize").flatMap(SantaSize.init(rawValue:)) ?? .small
+    private var wasHeld = false
     private var reported = false
 
     func applicationDidFinishLaunching(_ notification:Notification) {
@@ -38,7 +40,8 @@ final class SnowApp: NSObject, NSApplicationDelegate, NSMenuDelegate {
         let center = NSWorkspace.shared.notificationCenter
         center.addObserver(self,selector:#selector(suspend),name:NSWorkspace.screensDidSleepNotification,object:nil)
         center.addObserver(self,selector:#selector(resume),name:NSWorkspace.screensDidWakeNotification,object:nil)
-        center.addObserver(self,selector:#selector(spaceChanged),name:NSWorkspace.activeSpaceDidChangeNotification,object:nil)
+        center.addObserver(self,selector:#selector(windowsChanged),name:NSWorkspace.activeSpaceDidChangeNotification,object:nil)
+        center.addObserver(self,selector:#selector(windowsChanged),name:NSWorkspace.didActivateApplicationNotification,object:nil)
         screensChanged()
         synchronize()
     }
@@ -49,6 +52,14 @@ final class SnowApp: NSObject, NSApplicationDelegate, NSMenuDelegate {
         guard let primary = NSScreen.screens.first else { return }
         func quartz(_ rect:CGRect) -> CGRect {
             CGRect(x:rect.minX,y:primary.frame.maxY-rect.maxY,width:rect.width,height:rect.height)
+        }
+        // Since macOS 26 the menu bar is see-through, so Santas can peek into it everywhere but the camera notch.
+        let clearMenuBar = ProcessInfo.processInfo.isOperatingSystemAtLeast(OperatingSystemVersion(majorVersion:26,minorVersion:0,patchVersion:0))
+        func blind(_ screen:NSScreen) -> CGRect {
+            let f = quartz(screen.frame)
+            guard clearMenuBar else { return CGRect(x:f.minX,y:f.minY,width:f.width,height:quartz(screen.visibleFrame).minY-f.minY) }
+            guard let left = screen.auxiliaryTopLeftArea, let right = screen.auxiliaryTopRightArea else { return .null }
+            return CGRect(x:f.minX+left.width,y:f.minY,width:f.width-left.width-right.width,height:screen.safeAreaInsets.top)
         }
         for screen in NSScreen.screens {
             let r = screen.frame
@@ -64,13 +75,15 @@ final class SnowApp: NSObject, NSApplicationDelegate, NSMenuDelegate {
             let view = SnowView(frame:CGRect(origin:.zero,size:r.size))
             window.contentView = view
             view.santas.size = santaSize
+            view.peekers.size = santaSize
+            view.peekers.enabled = showPeekers
             view.density = density; view.santas.enabled = showSantas; view.seed()
-            scenes.append((window,view,DisplayArea(frame:quartz(r),work:quartz(screen.visibleFrame))))
+            scenes.append((window,view,DisplayArea(frame:quartz(r),work:quartz(screen.visibleFrame),blind:blind(screen))))
             if !paused && !asleep { window.orderFrontRegardless() }
         }
         nextLayout = 0
     }
-    @objc private func spaceChanged() { nextLayout = 0 }
+    @objc private func windowsChanged() { nextLayout = 0 }
     @objc private func suspend() { asleep = true; synchronize() }
     @objc private func resume() { asleep = false; screensChanged(); synchronize() }
 
@@ -95,8 +108,12 @@ final class SnowApp: NSObject, NSApplicationDelegate, NSMenuDelegate {
         let cursor = NSEvent.mouseLocation
         let mouse = CGPoint(x:cursor.x,y:(NSScreen.screens.first?.frame.maxY ?? 0)-cursor.y)
         let impulse = motion.takeImpulse()
+        let held = NSEvent.pressedMouseButtons & 1 != 0
+        // A window may have just been dropped somewhere new, so look again right away.
+        if wasHeld && !held { nextLayout = 0 }
+        wasHeld = held
         for (_,view,display) in scenes {
-            view.advance(dt:dt,mouse:CGPoint(x:mouse.x-display.frame.minX,y:mouse.y-display.frame.minY),tilt:motion.tilt,impulse:impulse)
+            view.advance(dt:dt,mouse:CGPoint(x:mouse.x-display.frame.minX,y:mouse.y-display.frame.minY),held:held,tilt:motion.tilt,impulse:impulse)
         }
         if now >= nextLayout && !pendingLayout {
             nextLayout = now+0.65
@@ -105,8 +122,9 @@ final class SnowApp: NSObject, NSApplicationDelegate, NSMenuDelegate {
             let pid = NSWorkspace.shared.frontmostApplication?.processIdentifier
             let dock = NSRunningApplication.runningApplications(withBundleIdentifier:"com.apple.dock").first?.processIdentifier
             let revision = generation
+            let clearance = PeekingSantas.clearance(for:santaSize)
             layoutQueue.async { [weak self] in
-                let result = readLayout(displays:displays,foreground:pid,dockPID:dock,mouse:mouse)
+                let result = readLayout(displays:displays,foreground:pid,dockPID:dock,mouse:mouse,clearance:clearance)
                 DispatchQueue.main.async {
                     guard let self else { return }
                     self.pendingLayout = false
@@ -115,6 +133,7 @@ final class SnowApp: NSObject, NSApplicationDelegate, NSMenuDelegate {
                     for (_,view,d) in self.scenes {
                         view.setShelves(result.shelves,screen:d.frame)
                         view.santas.route = result.routes.compactMap { $0.local(to:d.frame) }.first
+                        view.peekers.setLookouts(result.lookouts,screen:d.frame)
                     }
                 }
             }
@@ -144,6 +163,7 @@ final class SnowApp: NSObject, NSApplicationDelegate, NSMenuDelegate {
         }
         snow.submenu = amounts
         item("Roaming Santas",#selector(toggleSantas),in:menu).state = showSantas ? .on:.off
+        item("Peeking Santas",#selector(togglePeekers),in:menu).state = showPeekers ? .on:.off
         let sizes = NSMenu()
         for size in SantaSize.allCases {
             let option = item(size.rawValue,#selector(changeSantaSize(_:)),in:sizes)
@@ -165,12 +185,22 @@ final class SnowApp: NSObject, NSApplicationDelegate, NSMenuDelegate {
         UserDefaults.standard.set(showSantas,forKey:"showSantas")
         for scene in scenes { scene.view.santas.enabled = showSantas }
     }
+    @objc private func togglePeekers() {
+        showPeekers.toggle()
+        UserDefaults.standard.set(showPeekers,forKey:"peekingSantas")
+        for scene in scenes { scene.view.peekers.enabled = showPeekers }
+    }
     @objc private func recenter() { motion.calibrate() }
     @objc private func changeSantaSize(_ sender:NSMenuItem) {
         guard let value = sender.representedObject as? String, let size = SantaSize(rawValue:value) else { return }
         santaSize = size
         UserDefaults.standard.set(value,forKey:"santaSize")
-        for scene in scenes { scene.view.santas.size = size }
+        for scene in scenes {
+            scene.view.santas.size = size
+            scene.view.peekers.size = size
+        }
+        // Bigger Santas need more room above a window, so measure the lookouts again.
+        nextLayout = 0
     }
     @objc private func changeDensity(_ sender:NSMenuItem) {
         density = [0.55,1.0,1.8][sender.tag]
